@@ -1,0 +1,285 @@
+---
+title: "LBB: Linear Regression - Graduate Admission"
+author: "Benarivo"
+date: "04/04/2020"
+output: 
+  html_document:
+    highlight: breezedark
+    number_section: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r,warning=FALSE,message=FALSE}
+library(dplyr)
+library(GGally)
+library(rsample)
+library(tidyr)
+library(lmtest)
+library(car)
+library(MLmetrics)
+```
+
+# Defining Business Problem
+
+In this project a dataset containing information of graduate admission will be analysed. 
+We will check what predictors affect the chance of admission and how large is their effect. 
+
+Linear Regression will be used for this analysis.
+
+First we need to load the data: 
+```{r}
+admission <- read.csv("Admission_Predict_Ver1.1.csv")
+head(admission)
+```
+
+The data have below columns: 
+1. 'Serial.No.': Running number of the data
+2. 'GRE_Score': GRE Scores ( out of 340 )
+3. 'TOEFL_Score': TOEFL Scores ( out of 120 )
+4. 'University.Rating': University Rating ( out of 5 )
+5. 'SOP': Statement of Purpose and Letter of Recommendation Strength ( out of 5 )
+6. 'LOR': Undergraduate GPA ( out of 10 )
+7. 'Research': Research Experience ( either 0 or 1 )
+8. 'Chance.of.Admit': Chance of Admit ( ranging from 0 to 1 )
+
+
+We need to change 'Research' into factor and remove serial as it is a running number and not necessary for our analysis.
+```{r}
+admission$Research <- as.factor(admission$Research)
+admission <- admission %>% 
+  select(-Serial.No.)
+head(admission)
+```
+
+
+
+# Defining Target Variable
+
+The target is: Chance of being admitted to the Graduate Program 'Chance.of.Admit'.
+
+# Exploring the Data
+
+## Correlation
+
+Now, we will check the correclation between the target and other variables to determine the predictors to be used.
+```{r}
+ggcorr(admission, label = T, hjust = 0.9,  label_size = 3, layout.exp = 3)
+```
+
+From above graph, we could see that all the variables are highly correlated with the 'Chance.of.Admit'. 
+Therefore, we will consider all the variables as predictors.
+
+## Outliers
+
+The outliers in the predictors then need to be checked.
+```{r}
+boxplot(admission$GRE.Score)
+```
+```{r}
+boxplot(admission$TOEFL.Score)
+```
+```{r}
+boxplot(admission %>% select(-c(GRE.Score,TOEFL.Score)))
+```
+From The boxplot above, it could be observed that we have an outlier in the 'LOR' and 'Chance.of.Admit'. 
+However, we will keep the outlier to make sure the data is variative.
+
+# Cross Validation
+
+We need to separate data into train dataset 'ad_train' and test dataset 'ad_test'.
+70% of the data will be stored in the train dataset and 30% will be stored in the test dataset.
+```{r}
+
+set.seed(100)
+splitted <- initial_split(data = admission, prop = 0.7)
+ad_train <- training(splitted)
+ad_test <- testing(splitted)
+```
+
+# Modeling
+
+To create the models and to choose which predictors that will be used, we will use step wise method:
+
+First, we create a model with all predictors:
+```{r}
+model_ad_all <- lm(formula = Chance.of.Admit ~ .,data = ad_train)
+summary(model_ad_all)
+```
+
+Second, we create a model with no predictors:
+```{r}
+model_ad_none <- lm(formula = Chance.of.Admit ~ .,data = ad_train)
+summary(model_ad_none)
+```
+
+## Backward Step-Wise Method
+
+Now, a model with step-wise backward will be created:
+
+```{r}
+step(object = model_ad_all,direction = "backward", trace = 0)
+```
+
+```{r}
+model_ad_back <- lm(formula = Chance.of.Admit ~ GRE.Score + TOEFL.Score + University.Rating + 
+    LOR + CGPA + Research, data = ad_train)
+summary(model_ad_back)
+```
+
+Based on the step-wise backward method, we do not need the 'SOP' data. 
+
+## Forward Step-Wise Method
+
+Now, let's create a model using step-wise forward method:
+
+```{r}
+step(object = model_ad_none,scope = list(lower = model_ad_none, upper =model_ad_all),direction = "forward", trace = 0)
+```
+
+```{r}
+model_ad_forward <-  lm(formula = Chance.of.Admit ~ GRE.Score + TOEFL.Score + University.Rating + 
+    SOP + LOR + CGPA + Research, data = ad_train)
+summary(model_ad_forward)
+```
+
+By using a forward step-wise method, all the predictors are needed. 
+
+## Combination of Forward and Backward Step-Wise Method
+
+We will now try the combination of forward and backward step-wise: 
+
+```{r}
+step(object = model_ad_all,scope = list(lower = model_ad_none, upper =model_ad_all),direction = "both", trace = 0)
+```
+
+```{r}
+model_ad_both <- lm(formula = Chance.of.Admit ~ GRE.Score + TOEFL.Score + University.Rating + 
+    SOP + LOR + CGPA + Research, data = ad_train)
+summary(model_ad_both)
+```
+
+By using both forward and backward step-wise method, we need all predictors for the model.
+
+## Selecting the Model 
+
+To compare all the models, the adjusted r-squared for each model needs to be calculated and compared:
+```{r}
+summary(model_ad_back)$adj.r.squared
+summary(model_ad_forward)$adj.r.squared
+summary(model_ad_both)$adj.r.squared
+```
+
+The highest adjusted R-square value is from 'model_ad_back'. 
+However,this model does not have 'SOP': Statement of Purpose and Letter of Recommendation Strength as its predictor.
+Whereas in the real world, Statement of Purpose and Letter of Recommendation Strength is taken into account during graduate admission.
+Therefore, we will use 'model_ad_both' that uses all variables as predictos. 
+
+# Assumption Check
+
+In this chapter, we will check our assumptions for normality, heteroscedacity and multicolinearity. 
+  
+## Normality
+
+For the normality assumption check, we will checkt the distribution of the model's residual using Shapiro-Wilk Test 'shapiro.test()'.
+If the p-value > alpha (0.05), therefore H0 is not rejected.
+
+H0: residuals of the model are normaly distributed 
+
+H1: residuals of the model are not normaly distributed 
+```{r}
+hist(model_ad_both$residuals)
+```
+  
+```{r}
+shapiro.test(x = model_ad_both$residuals)
+```
+The p-value of 'model_ad_both''s residual is 1.861e-11 which is under 0.05, Therefore we reject H0 and accepts H1.
+
+H1: residuals of the model are not normaly distributed.
+
+One of the solution to have a more normaly distributed residuals is to collect more data to create the model.
+
+
+## Heteroscedasticity
+
+For Heteroscedasticity assumption check,we are checking if the residuals of our model is to check if the residuals are spreading without any pattern. 
+On other hand, it is to check if heteroscedasticity is happening or not. 
+
+For this assumption check, Breusch-Pagan hypothesis test 'bptest' is used: 
+If the p-value > alpha (0.05), therefore H0 is not rejected.
+
+H0: The residuals are spreading constantly (Homoscedasticity)
+
+H1: The residuals are not spreading constantly/making a pattern (Heteroscedasticity)
+
+```{r}
+plot(model_ad_both$fitted.values, model_ad_both$residuals)
+abline(h = 0, col = "red")
+```
+
+```{r}
+bptest(model_ad_both)
+```
+
+The p-value from 'bptest()' is 0.0043, which is under 0.05, therefore H0 is rejected and H1 is accepted. 
+
+H1: The residuals are not spreading constantly/making a pattern (Heteroscedasticity)
+
+This could be fixed by having more variance in the training dataset. 
+
+
+## Multincolinearity
+
+For multicolinearity assumption check, we want to know whether the predictors are independent against each other.
+This can be seen by the VIF(Variance Inflation Factor) value of each predictors.
+
+```{r}
+vif(model_ad_both)
+```
+
+The VIF values are under 10, therefore, there are no multicolinearities between the predictors. 
+
+
+# Predicting and Calculating Error
+
+Now, we will predict the value of the chance of admission using our model 'model_ad_both' with data for the predictors from the test dataset 'ad_test'.
+```{r}
+ad_pred_test <- predict(object = model_ad_both,newdata = ad_test)
+ad_pred_test
+```
+
+After getting the data protection, we calculate the MSE (Mean Squared Error) and the RMSE (Root Mean Squared Error)
+```{r}
+MSE(y_pred = ad_pred_test,y_true = ad_test$Chance.of.Admit)
+RMSE(y_pred = ad_pred_test,y_true = ad_test$Chance.of.Admit)
+```
+
+The MSE of our prediction is: 0.0033
+The RMSE of our prediction is: 0.057
+
+# Conclusion
+
+The conclusion of this project is that all the predictors are used, selected using the combination of backward and forward step-wise method:
+
+Below is the summary of the model.
+```{r}
+summary(model_ad_both)
+```
+
+The MSE of our prediction is: 0.0033
+The RMSE of our prediction is: 0.057
+
+The model does not pass the normality and heteroscedacity assumption check, in order to pass those assumption checks, more variance in our data may be needed. 
+
